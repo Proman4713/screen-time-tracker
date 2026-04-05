@@ -2,7 +2,6 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:provider/provider.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
-import 'dart:ui';
 import 'package:flutter/gestures.dart';
 import '../providers/screen_time_provider.dart';
 import '../providers/settings_provider.dart';
@@ -45,34 +44,68 @@ class HomeScreen extends StatelessWidget {
             const SizedBox(height: 24),
 
             // Main Content Row - Chart + Top Apps
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  flex: 3,
-                  child: _buildUsageChart(context, theme, isLight),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  flex: 2,
-                  child: _buildTopAppsCard(context, theme, isLight),
-                ),
-              ],
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final useStackedCards = constraints.maxWidth < 1050;
+
+                if (useStackedCards) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildUsageChart(context, theme, isLight),
+                      const SizedBox(height: 16),
+                      _buildTopAppsCard(context, theme, isLight),
+                    ],
+                  );
+                }
+
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: _buildUsageChart(context, theme, isLight),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      flex: 2,
+                      child: _buildTopAppsCard(context, theme, isLight),
+                    ),
+                  ],
+                );
+              },
             ),
             const SizedBox(height: 24),
 
             // Recent Activity + Usage Trend Row
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: _buildRecentActivityCard(context, theme, isLight),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: _buildQuickActionsCard(context, theme, isLight),
-                ),
-              ],
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final useStackedCards = constraints.maxWidth < 900;
+
+                if (useStackedCards) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildRecentActivityCard(context, theme, isLight),
+                      const SizedBox(height: 16),
+                      _buildQuickActionsCard(context, theme, isLight),
+                    ],
+                  );
+                }
+
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: _buildRecentActivityCard(context, theme, isLight),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: _buildQuickActionsCard(context, theme, isLight),
+                    ),
+                  ],
+                );
+              },
             ),
           ],
         ),
@@ -96,58 +129,87 @@ class HomeScreen extends StatelessWidget {
       greetingIcon = FluentIcons.clear_night;
     }
 
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    final titleBlock = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  greetingIcon,
-                  size: 18,
-                  color: theme.accentColor,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  '$greeting!',
-                  style: theme.typography.title?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              DateFormat('EEEE, MMMM d').format(DateTime.now()),
-              style: theme.typography.body?.copyWith(
-                color: isLight ? Colors.grey[130] : Colors.grey[100],
-              ),
-            ),
-          ],
-        ),
         Row(
           children: [
-            _buildTimePeriodSelector(context, theme, isLight),
+            Icon(
+              greetingIcon,
+              size: 18,
+              color: theme.accentColor,
+            ),
             const SizedBox(width: 8),
-            Tooltip(
-              message: 'Refresh data (Ctrl+R)',
-              child: FilledButton(
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: const [
-                    Icon(FluentIcons.refresh, size: 14),
-                    SizedBox(width: 8),
-                    Text('Refresh'),
-                  ],
-                ),
-                onPressed: () => context.read<ScreenTimeProvider>().refreshData(),
+            Text(
+              '$greeting!',
+              style: theme.typography.title?.copyWith(
+                fontWeight: FontWeight.w600,
               ),
             ),
           ],
         ),
+        const SizedBox(height: 4),
+        Text(
+          DateFormat('EEEE, MMMM d').format(DateTime.now()),
+          style: theme.typography.body?.copyWith(
+            color: isLight ? Colors.grey[130] : Colors.grey[100],
+          ),
+        ),
       ],
+    );
+
+    final refreshButton = Tooltip(
+      message: 'Refresh data (Ctrl+R)',
+      child: FilledButton(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(FluentIcons.refresh, size: 14),
+            SizedBox(width: 8),
+            Text('Refresh'),
+          ],
+        ),
+        onPressed: () => context.read<ScreenTimeProvider>().refreshData(),
+      ),
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isCompact = constraints.maxWidth < 960;
+
+        if (isCompact) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              titleBlock,
+              const SizedBox(height: 12),
+              SizedBox(
+                width: constraints.maxWidth,
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: _buildTimePeriodSelector(context, theme, isLight),
+                ),
+              ),
+              const SizedBox(height: 8),
+              refreshButton,
+            ],
+          );
+        }
+
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            titleBlock,
+            Row(
+              children: [
+                _buildTimePeriodSelector(context, theme, isLight),
+                const SizedBox(width: 8),
+                refreshButton,
+              ],
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -180,6 +242,12 @@ class HomeScreen extends StatelessWidget {
                 label: '7 Days',
                 isSelected: provider.selectedDays == 7,
                 onPressed: () => provider.loadDataForDays(7),
+                isLight: isLight,
+              ),
+              _SegmentButton(
+                label: '14 Days',
+                isSelected: provider.selectedDays == 14,
+                onPressed: () => provider.loadDataForDays(14),
                 isLight: isLight,
               ),
               _SegmentButton(
@@ -217,7 +285,7 @@ class HomeScreen extends StatelessWidget {
             borderRadius: BorderRadius.circular(12),
             boxShadow: [
               BoxShadow(
-                color: theme.accentColor.withOpacity(0.3),
+                color: theme.accentColor.withValues(alpha: 0.3),
                 blurRadius: 20,
                 offset: const Offset(0, 8),
               ),
@@ -237,7 +305,7 @@ class HomeScreen extends StatelessWidget {
                             vertical: 4,
                           ),
                           decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.2),
+                            color: Colors.white.withValues(alpha: 0.2),
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Row(
@@ -259,7 +327,7 @@ class HomeScreen extends StatelessWidget {
                                 style: TextStyle(
                                   fontSize: 10,
                                   fontWeight: FontWeight.w600,
-                                  color: Colors.white.withOpacity(0.9),
+                                  color: Colors.white.withValues(alpha: 0.9),
                                   letterSpacing: 0.5,
                                 ),
                               ),
@@ -271,9 +339,9 @@ class HomeScreen extends StatelessWidget {
                           style: ButtonStyle(
                             backgroundColor: WidgetStateProperty.resolveWith((states) {
                               if (states.isHovered) {
-                                return Colors.white.withOpacity(0.35);
+                                return Colors.white.withValues(alpha: 0.35);
                               }
-                              return Colors.white.withOpacity(0.2);
+                              return Colors.white.withValues(alpha: 0.2);
                             }),
                             foregroundColor: WidgetStateProperty.all(Colors.white),
                             padding: WidgetStateProperty.all(
@@ -317,7 +385,7 @@ class HomeScreen extends StatelessWidget {
                           : 'Total Screen Time',
                       style: TextStyle(
                         fontSize: 14,
-                        color: Colors.white.withOpacity(0.8),
+                        color: Colors.white.withValues(alpha: 0.8),
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -340,7 +408,7 @@ class HomeScreen extends StatelessWidget {
                             style: TextStyle(
                               fontSize: 20,
                               fontWeight: FontWeight.w500,
-                              color: Colors.white.withOpacity(0.8),
+                              color: Colors.white.withValues(alpha: 0.8),
                             ),
                           ),
                         ),
@@ -361,7 +429,7 @@ class HomeScreen extends StatelessWidget {
                             style: TextStyle(
                               fontSize: 20,
                               fontWeight: FontWeight.w500,
-                              color: Colors.white.withOpacity(0.8),
+                              color: Colors.white.withValues(alpha: 0.8),
                             ),
                           ),
                         ),
@@ -383,7 +451,7 @@ class HomeScreen extends StatelessWidget {
                               style: TextStyle(
                                 fontSize: 20,
                                 fontWeight: FontWeight.w500,
-                                color: Colors.white.withOpacity(0.8),
+                                color: Colors.white.withValues(alpha: 0.8),
                               ),
                             ),
                           ),
@@ -398,7 +466,7 @@ class HomeScreen extends StatelessWidget {
                           vertical: 8,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.15),
+                          color: Colors.white.withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Row(
@@ -407,7 +475,7 @@ class HomeScreen extends StatelessWidget {
                             Icon(
                               FluentIcons.app_icon_default,
                               size: 14,
-                              color: Colors.white.withOpacity(0.8),
+                              color: Colors.white.withValues(alpha: 0.8),
                             ),
                             const SizedBox(width: 8),
                             Flexible(
@@ -415,7 +483,7 @@ class HomeScreen extends StatelessWidget {
                                 'Currently: ${provider.currentApp}',
                                 style: TextStyle(
                                   fontSize: 12,
-                                  color: Colors.white.withOpacity(0.9),
+                                  color: Colors.white.withValues(alpha: 0.9),
                                 ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
@@ -454,52 +522,72 @@ class HomeScreen extends StatelessWidget {
                 : topApp.displayName)
             : '—';
 
-        return IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(
-                child: _QuickStatCard(
-                  icon: FluentIcons.app_icon_default,
-                  title: 'Apps Used',
-                  value: '$appCount',
-                  color: Colors.teal,
-                  isLight: isLight,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _QuickStatCard(
-                  icon: FluentIcons.trophy2,
-                  title: 'Most Used',
-                  value: topAppName,
-                  color: Colors.orange,
-                  isLight: isLight,
-                  smallText: true,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _QuickStatCard(
-                  icon: FluentIcons.calendar,
-                  title: 'Daily Avg',
-                  value: '${avgMinutes}m',
-                  color: Colors.purple,
-                  isLight: isLight,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _QuickStatCard(
-                  icon: FluentIcons.clock,
-                  title: 'Top App Time',
-                  value: topApp?.formattedTime ?? '—',
-                  color: Colors.magenta,
-                  isLight: isLight,
-                ),
-              ),
-            ],
+        final cards = <Widget>[
+          _QuickStatCard(
+            icon: FluentIcons.app_icon_default,
+            title: 'Apps Used',
+            value: '$appCount',
+            color: Colors.teal,
+            isLight: isLight,
           ),
+          _QuickStatCard(
+            icon: FluentIcons.trophy2,
+            title: 'Most Used',
+            value: topAppName,
+            color: Colors.orange,
+            isLight: isLight,
+            smallText: true,
+          ),
+          _QuickStatCard(
+            icon: FluentIcons.calendar,
+            title: 'Daily Avg',
+            value: '${avgMinutes}m',
+            color: Colors.purple,
+            isLight: isLight,
+          ),
+          _QuickStatCard(
+            icon: FluentIcons.clock,
+            title: 'Top App Time',
+            value: topApp?.formattedTime ?? '—',
+            color: Colors.magenta,
+            isLight: isLight,
+          ),
+        ];
+
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final isCompact = constraints.maxWidth < 980;
+
+            if (!isCompact) {
+              return IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: cards[0]),
+                    const SizedBox(width: 12),
+                    Expanded(child: cards[1]),
+                    const SizedBox(width: 12),
+                    Expanded(child: cards[2]),
+                    const SizedBox(width: 12),
+                    Expanded(child: cards[3]),
+                  ],
+                ),
+              );
+            }
+
+            final useSingleColumn = constraints.maxWidth < 560;
+            final cardWidth = useSingleColumn
+                ? constraints.maxWidth
+                : (constraints.maxWidth - 12) / 2;
+
+            return Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: cards
+                  .map((card) => SizedBox(width: cardWidth, child: card))
+                  .toList(),
+            );
+          },
         );
       },
     );
@@ -680,26 +768,41 @@ class HomeScreen extends StatelessWidget {
   Widget _buildQuickActionsCard(BuildContext context, FluentThemeData theme, bool isLight) {
     return Consumer<ScreenTimeProvider>(
       builder: (context, provider, child) {
-        // Get today's usage
-        final todaySeconds = provider.totalSecondsToday;
+        final now = DateTime.now();
+        final todayKey = DateFormat('yyyy-MM-dd').format(now);
+        final yesterdayKey = DateFormat(
+          'yyyy-MM-dd',
+        ).format(now.subtract(const Duration(days: 1)));
+
+        final usageByDate = <String, int>{};
+        for (final row in provider.dailyUsage) {
+          final dateKey = row['date'] as String?;
+          if (dateKey == null || dateKey.isEmpty) {
+            continue;
+          }
+          usageByDate[dateKey] = (row['total_seconds'] as int?) ?? 0;
+        }
+
+        // Use live tracker total for today when it is ahead of persisted daily rollup.
+        int todaySeconds = usageByDate[todayKey] ?? 0;
+        if (provider.liveTodayTotalSeconds > todaySeconds) {
+          todaySeconds = provider.liveTodayTotalSeconds;
+        }
+
         final todayHours = todaySeconds ~/ 3600;
         final todayMinutes = (todaySeconds % 3600) ~/ 60;
-        
-        // Fetch real yesterday data
-        int yesterdaySeconds = 0;
-        if (provider.dailyUsage.length >= 2) {
-           yesterdaySeconds = provider.dailyUsage[1]['usageSeconds'] ?? 0;
-        }
+
+        final yesterdaySeconds = usageByDate[yesterdayKey] ?? 0;
 
         final yesterdayHours = yesterdaySeconds ~/ 3600;
         final yesterdayMinutes = (yesterdaySeconds % 3600) ~/ 60;
-        
+
         // Calculate change percentage
-        final changePercent = yesterdaySeconds > 0 
+        final changePercent = yesterdaySeconds > 0
             ? ((todaySeconds - yesterdaySeconds) / yesterdaySeconds * 100).round()
-            : 0;
-        final isIncrease = changePercent > 0;
-        
+            : (todaySeconds > 0 ? 100 : 0);
+        final isIncrease = todaySeconds > yesterdaySeconds;
+
         // Max for progress bar
         final maxSeconds = todaySeconds > yesterdaySeconds ? todaySeconds : yesterdaySeconds;
         
@@ -733,7 +836,7 @@ class HomeScreen extends StatelessWidget {
                     ),
                     decoration: BoxDecoration(
                       color: (isIncrease ? Colors.orange : Colors.green)
-                          .withOpacity(0.1),
+                          .withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Row(
@@ -773,7 +876,7 @@ class HomeScreen extends StatelessWidget {
                 label: 'Yesterday',
                 value: '${yesterdayHours}h ${yesterdayMinutes}m',
                 progress: maxSeconds > 0 ? yesterdaySeconds / maxSeconds : 0,
-                color: Colors.grey[100]!,
+                color: Colors.grey[100],
                 isLight: isLight,
               ),
               const SizedBox(height: 12),
@@ -891,7 +994,7 @@ class _QuickStatCard extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
+              color: color.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(6),
             ),
             child: Icon(icon, size: 14, color: color),
@@ -949,7 +1052,7 @@ class _AppRow extends StatelessWidget {
             width: 24,
             height: 24,
             decoration: BoxDecoration(
-              color: _getRankColor(rank).withOpacity(0.1),
+              color: _getRankColor(rank).withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(6),
             ),
             child: Center(
@@ -996,11 +1099,11 @@ class _AppRow extends StatelessWidget {
       case 1:
         return Colors.orange;
       case 2:
-        return Colors.grey[120]!;
+        return Colors.grey[120];
       case 3:
         return Colors.orange.dark;
       default:
-        return Colors.grey[100]!;
+        return Colors.grey[100];
     }
   }
 }
@@ -1166,7 +1269,7 @@ class _UsageChartCardState extends State<_UsageChartCard> {
                       vertical: 4,
                     ),
                     decoration: BoxDecoration(
-                      color: theme.accentColor.withOpacity(0.1),
+                      color: theme.accentColor.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
@@ -1186,70 +1289,95 @@ class _UsageChartCardState extends State<_UsageChartCard> {
               if (displayUsage.isEmpty)
                 _buildEmptyState(theme, isLight)
               else
-                SizedBox(
-                  height: 200,
-                  child: Row(
-                    children: [
-                      // Donut chart with center widget
-                      Expanded(
-                        child: Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            PieChart(
-                              PieChartData(
-                                pieTouchData: PieTouchData(
-                                  touchCallback: (FlTouchEvent event, pieTouchResponse) {
-                                    setState(() {
-                                      if (!event.isInterestedForInteractions ||
-                                          pieTouchResponse == null ||
-                                          pieTouchResponse.touchedSection == null) {
-                                        _touchedIndex = -1;
-                                        return;
-                                      }
-                                      _touchedIndex = pieTouchResponse.touchedSection!.touchedSectionIndex;
-                                    });
-                                  },
-                                ),
-                                borderData: FlBorderData(show: false),
-                                sectionsSpace: 2,
-                                centerSpaceRadius: 45,
-                                sections: _buildSections(displayUsage, theme),
-                              ),
-                              swapAnimationDuration: const Duration(milliseconds: 400),
-                              swapAnimationCurve: Curves.easeInOut,
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final useStackedLayout = constraints.maxWidth < 700;
+
+                    final pieSection = Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        PieChart(
+                          PieChartData(
+                            pieTouchData: PieTouchData(
+                              touchCallback: (FlTouchEvent event, pieTouchResponse) {
+                                setState(() {
+                                  if (!event.isInterestedForInteractions ||
+                                      pieTouchResponse == null ||
+                                      pieTouchResponse.touchedSection == null) {
+                                    _touchedIndex = -1;
+                                    return;
+                                  }
+                                  _touchedIndex = pieTouchResponse.touchedSection!.touchedSectionIndex;
+                                });
+                              },
                             ),
-                            // Center display
-                            _buildCenterDisplay(displayUsage, provider, theme, isLight),
-                          ],
+                            borderData: FlBorderData(show: false),
+                            sectionsSpace: 2,
+                            centerSpaceRadius: 45,
+                            sections: _buildSections(displayUsage, theme),
+                          ),
+                          swapAnimationDuration: const Duration(milliseconds: 400),
+                          swapAnimationCurve: Curves.easeInOut,
                         ),
-                      ),
-                      const SizedBox(width: 20),
-                      // Legend — absorbs scroll so page doesn't scroll
-                      Expanded(
-                        child: Listener(
-                          onPointerSignal: (event) {
-                            if (event is PointerScrollEvent) {
-                              GestureBinding.instance.pointerSignalResolver.register(
-                                event, (event) {},
-                              );
-                            }
-                          },
-                          child: ScrollConfiguration(
-                            behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
-                            child: SingleChildScrollView(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: _buildLegendItems(
-                                  displayUsage, theme, isLight,
-                                  blur: settings.blurAppNames,
-                                ),
-                              ),
+                        _buildCenterDisplay(displayUsage, provider, theme, isLight),
+                      ],
+                    );
+
+                    final legendSection = Listener(
+                      onPointerSignal: (event) {
+                        if (event is PointerScrollEvent) {
+                          GestureBinding.instance.pointerSignalResolver.register(
+                            event,
+                            (event) {},
+                          );
+                        }
+                      },
+                      child: ScrollConfiguration(
+                        behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
+                        child: SingleChildScrollView(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: _buildLegendItems(
+                              displayUsage,
+                              theme,
+                              isLight,
+                              blur: settings.blurAppNames,
                             ),
                           ),
                         ),
                       ),
-                    ],
-                  ),
+                    );
+
+                    if (useStackedLayout) {
+                      return SizedBox(
+                        height: 340,
+                        child: Column(
+                          children: [
+                            Expanded(
+                              flex: 3,
+                              child: pieSection,
+                            ),
+                            const SizedBox(height: 12),
+                            Expanded(
+                              flex: 2,
+                              child: legendSection,
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+
+                    return SizedBox(
+                      height: 200,
+                      child: Row(
+                        children: [
+                          Expanded(child: pieSection),
+                          const SizedBox(width: 20),
+                          Expanded(child: legendSection),
+                        ],
+                      ),
+                    );
+                  },
                 ),
             ],
           ),
@@ -1385,7 +1513,7 @@ class _UsageChartCardState extends State<_UsageChartCard> {
       final color = _colorForIndex(i, usage);
 
       return PieChartSectionData(
-        color: color.withOpacity(opacity),
+        color: color.withValues(alpha: opacity),
         value: usage[i].totalSeconds.toDouble(),
         title: isTouched ? '${usage[i].percentage.toStringAsFixed(0)}%' : '',
         radius: radius,
@@ -1425,8 +1553,8 @@ class _UsageChartCardState extends State<_UsageChartCard> {
             decoration: BoxDecoration(
               color: isSelected
                   ? (isLight
-                      ? theme.accentColor.withOpacity(0.06)
-                      : theme.accentColor.withOpacity(0.08))
+                      ? theme.accentColor.withValues(alpha: 0.06)
+                      : theme.accentColor.withValues(alpha: 0.08))
                   : Colors.transparent,
               borderRadius: BorderRadius.circular(4),
             ),

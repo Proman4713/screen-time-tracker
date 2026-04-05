@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 
 class BlockService {
   static Future<bool> blockProcess(String processName) async {
@@ -10,10 +11,13 @@ class BlockService {
         return false;
       }
 
-      final result = await Process.run('taskkill', ['/F', '/IM', '$processName.exe']);
+        final imageName = processName.toLowerCase().endsWith('.exe')
+          ? processName
+          : '$processName.exe';
+        final result = await Process.run('taskkill', ['/F', '/IM', imageName]);
       return result.exitCode == 0;
     } catch (e) {
-      print('Error killing process $processName: $e');
+      debugPrint('Error killing process $processName: $e');
       return false;
     }
   }

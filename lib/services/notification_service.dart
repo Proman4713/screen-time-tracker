@@ -67,4 +67,31 @@ class NotificationService {
 
     await notification.show();
   }
+
+  Future<void> showBlockGraceStarted(String processName, int graceSeconds) async {
+    if (!_initialized) await initialize();
+
+    if (!_enabled) return;
+
+    final notification = LocalNotification(
+      title: 'Take a Break',
+      body:
+          '$processName is blocked by your rules. Close it within $graceSeconds seconds to avoid force close.',
+    );
+
+    await notification.show();
+  }
+
+  Future<void> showBlockGraceWarning(String processName, int secondsRemaining) async {
+    if (!_initialized) await initialize();
+
+    if (!_enabled) return;
+
+    final notification = LocalNotification(
+      title: 'Blocking Soon',
+      body: '$processName will close in $secondsRemaining seconds unless you switch away.',
+    );
+
+    await notification.show();
+  }
 }

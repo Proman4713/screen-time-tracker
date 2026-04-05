@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/app_block.dart';
 import '../providers/settings_provider.dart';
 import '../providers/screen_time_provider.dart';
+import '../services/installed_apps_service.dart';
 import '../widgets/app_icon_widget.dart';
 
 class BlockingScreen extends StatefulWidget {
@@ -121,6 +122,11 @@ class _BlockingScreenState extends State<BlockingScreen> {
     TimeOfDay? end = existingRule?.blockEndMinutes != null
         ? TimeOfDay(hour: existingRule!.blockEndMinutes! ~/ 60, minute: existingRule!.blockEndMinutes! % 60)
         : null;
+    bool isLoadingApps = true;
+    bool hasStartedLoading = false;
+    bool forceRefreshInstalledApps = false;
+    List<InstalledApp> installedApps = [];
+    InstalledApp? selectedApp;
 
     await showDialog(
       context: context,
@@ -128,16 +134,141 @@ class _BlockingScreenState extends State<BlockingScreen> {
         title: Text(existingRule == null ? 'Add Block Rule' : 'Edit Block Rule'),
         content: StatefulBuilder(
           builder: (context, setDialogState) {
+            if (!hasStartedLoading) {
+              hasStartedLoading = true;
+              () async {
+                try {
+                  final apps = await InstalledAppsService.getInstalledApps(
+                    forceRefresh: forceRefreshInstalledApps,
+                  );
+
+                  if (!mounted) {
+                    return;
+                  }
+
+                  setDialogState(() {
+                    installedApps = apps;
+                    isLoadingApps = false;
+                    forceRefreshInstalledApps = false;
+
+                    if (selectedApp != null &&
+                        !apps.any(
+                          (app) =>
+                              app.processName.toLowerCase() ==
+                              selectedApp!.processName.toLowerCase(),
+                        )) {
+                      selectedApp = null;
+                    }
+
+                    if (existingRule != null && selectedApp == null) {
+                      for (final app in apps) {
+                        if (app.processName.toLowerCase() ==
+                            existingRule.processName.toLowerCase()) {
+                          selectedApp = app;
+                          break;
+                        }
+                      }
+                    }
+                  });
+                } catch (e) {
+                  if (!mounted) {
+                    return;
+                  }
+
+                  setDialogState(() {
+                    installedApps = [];
+                    isLoadingApps = false;
+                    forceRefreshInstalledApps = false;
+                    selectedApp = null;
+                  });
+                }
+              }();
+            }
+
             return Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Text(
+                  'Select from installed apps:',
+                  style: FluentTheme.of(context).typography.caption,
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Expanded(
+                      child: isLoadingApps
+                          ? const ProgressRing(strokeWidth: 2)
+                          : ComboBox<InstalledApp>(
+                              isExpanded: true,
+                              placeholder: Text(
+                                installedApps.isEmpty
+                                    ? 'No installed apps found'
+                                    : 'Select an installed app',
+                              ),
+                              value: selectedApp,
+                              items: installedApps.map((app) {
+                                return ComboBoxItem<InstalledApp>(
+                                  value: app,
+                                  child: Row(
+                                    children: [
+                                      AppIconWidget(
+                                        processName: app.processName,
+                                        executablePath: app.executablePath,
+                                        size: 16,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          '${app.displayName} (${app.processName})',
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }).toList(),
+                              onChanged: (app) {
+                                if (app != null) {
+                                  setDialogState(() {
+                                    selectedApp = app;
+                                    nameController.text = app.processName;
+                                  });
+                                }
+                              },
+                            ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      icon: const Icon(FluentIcons.refresh),
+                      onPressed: isLoadingApps
+                          ? null
+                          : () {
+                              setDialogState(() {
+                                isLoadingApps = true;
+                                hasStartedLoading = false;
+                                forceRefreshInstalledApps = true;
+                              });
+                            },
+                    ),
+                  ],
+                ),
+
+                if (!isLoadingApps && installedApps.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      'No installed apps found. You can still type process name manually.',
+                      style: FluentTheme.of(context).typography.caption,
+                    ),
+                  ),
+
+                const SizedBox(height: 12),
                 InfoLabel(
                   label: 'App Process Name',
                   child: TextBox(
                     controller: nameController,
-                    placeholder: 'Process name (e.g., chrome)',
-                    enabled: existingRule == null,
+                    placeholder: 'Process name (e.g., chrome.exe)',
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -202,11 +333,12 @@ class _BlockingScreenState extends State<BlockingScreen> {
           ),
           FilledButton(
             child: Text(existingRule == null ? 'Add' : 'Save'),
-            onPressed: () {
-              if (nameController.text.isEmpty) return;
+            onPressed: () async {
+              final processName = nameController.text.trim();
+              if (processName.isEmpty) return;
 
               final newRule = AppBlock(
-                processName: nameController.text.trim(),
+                processName: processName,
                 dailyLimitSeconds: limitMinutes != null ? limitMinutes! * 60 : null,
                 blockStartMinutes: start != null ? start!.hour * 60 + start!.minute : null,
                 blockEndMinutes: end != null ? end!.hour * 60 + end!.minute : null,
@@ -214,12 +346,19 @@ class _BlockingScreenState extends State<BlockingScreen> {
 
               final settings = context.read<SettingsProvider>();
               if (existingRule == null) {
-                settings.addBlockRule(newRule);
+                await settings.addBlockRule(newRule);
+              } else if (existingRule.processName.toLowerCase() ==
+                  newRule.processName.toLowerCase()) {
+                await settings.updateBlockRule(newRule);
               } else {
-                settings.updateBlockRule(newRule);
+                await settings.removeBlockRule(existingRule.processName);
+                await settings.addBlockRule(newRule);
               }
               
               context.read<ScreenTimeProvider>().setBlockRules(settings.blockRules);
+              if (!context.mounted) {
+                return;
+              }
               Navigator.pop(context);
             },
           ),

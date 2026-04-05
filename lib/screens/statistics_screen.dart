@@ -15,6 +15,59 @@ class StatisticsScreen extends StatefulWidget {
 class _StatisticsScreenState extends State<StatisticsScreen> {
   int _selectedTimeRange = 7; // 7 days default
 
+  static const List<int> _supportedRanges = <int>[7, 14, 30];
+
+  int _normalizeRange(int days) {
+    if (_supportedRanges.contains(days)) {
+      return days;
+    }
+    if (days <= 7) {
+      return 7;
+    }
+    if (days <= 14) {
+      return 14;
+    }
+    return 30;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    final provider = context.read<ScreenTimeProvider>();
+    _selectedTimeRange = _normalizeRange(provider.selectedDays);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _applyTimeRange(_selectedTimeRange);
+    });
+  }
+
+  Future<void> _applyTimeRange(int days, {bool force = false}) async {
+    if (!mounted) {
+      return;
+    }
+
+    final normalizedDays = _normalizeRange(days);
+    final provider = context.read<ScreenTimeProvider>();
+
+    final alreadyLoaded =
+        _selectedTimeRange == normalizedDays &&
+        provider.selectedDays == normalizedDays &&
+        provider.dailyUsageWindowDays == normalizedDays;
+    if (!force && alreadyLoaded) {
+      return;
+    }
+
+    if (_selectedTimeRange != normalizedDays) {
+      setState(() => _selectedTimeRange = normalizedDays);
+    }
+
+    await provider.loadDataForDays(normalizedDays);
+    await provider.loadDailyUsage(normalizedDays);
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = FluentTheme.of(context);
@@ -27,141 +80,204 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
           parent: AlwaysScrollableScrollPhysics(),
         ),
         padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Page Header
-            _buildHeader(theme, isLight),
-            const SizedBox(height: 24),
+        child: SizedBox(
+          width: double.infinity,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Page Header
+              _buildHeader(theme, isLight),
+              const SizedBox(height: 24),
 
-            // Quick Stats Row
-            _buildQuickStats(theme, isLight),
-            const SizedBox(height: 24),
+              // Quick Stats Row
+              _buildQuickStats(theme, isLight),
+              const SizedBox(height: 24),
 
-            // Daily Usage Chart + Top Apps Row
-            IntrinsicHeight(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // Daily Usage Chart
-                  Expanded(
-                    flex: 3,
-                    child: _buildDailyChart(theme, isLight),
-                  ),
-                  const SizedBox(width: 16),
-                  // Top Apps this week
-                  Expanded(
-                    flex: 2,
-                    child: _buildTopAppsCard(theme, isLight),
-                  ),
-                ],
+              // Daily Usage Chart + Top Apps Row
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final useStackedCards = constraints.maxWidth < 1050;
+
+                  if (useStackedCards) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _buildDailyChart(theme, isLight),
+                        const SizedBox(height: 16),
+                        _buildTopAppsCard(theme, isLight),
+                      ],
+                    );
+                  }
+
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Daily Usage Chart
+                      Expanded(
+                        flex: 3,
+                        child: _buildDailyChart(theme, isLight),
+                      ),
+                      const SizedBox(width: 16),
+                      // Top Apps this week
+                      Expanded(
+                        flex: 2,
+                        child: _buildTopAppsCard(theme, isLight),
+                      ),
+                    ],
+                  );
+                },
               ),
-            ),
-            const SizedBox(height: 24),
+              const SizedBox(height: 24),
 
-            // Usage Insights + Weekly Comparison Row
-            IntrinsicHeight(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // Usage Insights
-                  Expanded(
-                    child: _buildUsagePatternCard(theme, isLight),
-                  ),
-                  const SizedBox(width: 16),
-                  // Weekly Comparison
-                  Expanded(
-                    child: _buildTrendsCard(theme, isLight),
-                  ),
-                ],
+              // Usage Insights + Weekly Comparison Row
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final useStackedCards = constraints.maxWidth < 900;
+
+                  if (useStackedCards) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _buildUsagePatternCard(theme, isLight),
+                        const SizedBox(height: 16),
+                        _buildTrendsCard(theme, isLight),
+                      ],
+                    );
+                  }
+
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Usage Insights
+                      Expanded(
+                        child: _buildUsagePatternCard(theme, isLight),
+                      ),
+                      const SizedBox(width: 16),
+                      // Weekly Comparison
+                      Expanded(
+                        child: _buildTrendsCard(theme, isLight),
+                      ),
+                    ],
+                  );
+                },
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _buildHeader(FluentThemeData theme, bool isLight) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    final titleBlock = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Statistics',
-              style: theme.typography.title?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Detailed insights into your screen time',
-              style: theme.typography.body?.copyWith(
-                color: isLight ? Colors.grey[130] : Colors.grey[100],
-              ),
-            ),
-          ],
+        Text(
+          'Statistics',
+          style: theme.typography.title?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
         ),
-        Row(
-          children: [
-            // Time range selector
-            Container(
-              decoration: BoxDecoration(
-                color: isLight
-                    ? const Color(0xFFF3F3F3)
-                    : const Color(0xFF2D2D2D),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: isLight
-                      ? const Color(0xFFE5E5E5)
-                      : const Color(0xFF3D3D3D),
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _TimeRangeButton(
-                    label: '7D',
-                    isSelected: _selectedTimeRange == 7,
-                    onPressed: () => setState(() => _selectedTimeRange = 7),
-                    isFirst: true,
-                    isLight: isLight,
-                  ),
-                  _TimeRangeButton(
-                    label: '14D',
-                    isSelected: _selectedTimeRange == 14,
-                    onPressed: () => setState(() => _selectedTimeRange = 14),
-                    isLight: isLight,
-                  ),
-                  _TimeRangeButton(
-                    label: '30D',
-                    isSelected: _selectedTimeRange == 30,
-                    onPressed: () => setState(() => _selectedTimeRange = 30),
-                    isLast: true,
-                    isLight: isLight,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 12),
-            FilledButton(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: const [
-                  Icon(FluentIcons.refresh, size: 14),
-                  SizedBox(width: 8),
-                  Text('Refresh'),
-                ],
-              ),
-              onPressed: () {
-                context.read<ScreenTimeProvider>().refreshData();
-              },
-            ),
-          ],
+        const SizedBox(height: 4),
+        Text(
+          'Detailed insights into your screen time',
+          style: theme.typography.body?.copyWith(
+            color: isLight ? Colors.grey[130] : Colors.grey[100],
+          ),
         ),
       ],
+    );
+
+    final timeRangeSelector = Container(
+      decoration: BoxDecoration(
+        color: isLight
+            ? const Color(0xFFF3F3F3)
+            : const Color(0xFF2D2D2D),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: isLight
+              ? const Color(0xFFE5E5E5)
+              : const Color(0xFF3D3D3D),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _TimeRangeButton(
+            label: '7D',
+            isSelected: _selectedTimeRange == 7,
+            onPressed: () => _applyTimeRange(7),
+            isFirst: true,
+            isLight: isLight,
+          ),
+          _TimeRangeButton(
+            label: '14D',
+            isSelected: _selectedTimeRange == 14,
+            onPressed: () => _applyTimeRange(14),
+            isLight: isLight,
+          ),
+          _TimeRangeButton(
+            label: '30D',
+            isSelected: _selectedTimeRange == 30,
+            onPressed: () => _applyTimeRange(30),
+            isLast: true,
+            isLight: isLight,
+          ),
+        ],
+      ),
+    );
+
+    final refreshButton = FilledButton(
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: const [
+          Icon(FluentIcons.refresh, size: 14),
+          SizedBox(width: 8),
+          Text('Refresh'),
+        ],
+      ),
+      onPressed: () {
+        _applyTimeRange(_selectedTimeRange, force: true);
+      },
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isCompact = constraints.maxWidth < 900;
+
+        if (isCompact) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              titleBlock,
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  timeRangeSelector,
+                  refreshButton,
+                ],
+              ),
+            ],
+          );
+        }
+
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            titleBlock,
+            Row(
+              children: [
+                timeRangeSelector,
+                const SizedBox(width: 12),
+                refreshButton,
+              ],
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -169,15 +285,15 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
     return Consumer<ScreenTimeProvider>(
       builder: (context, provider, child) {
         final dailyData = provider.dailyUsage;
+        final totalSeconds = provider.currentPeriodTotalSeconds;
+        final previousPeriodSeconds = provider.previousPeriodTotalSeconds;
 
-        int totalSeconds = 0;
         int maxSeconds = 0;
         int minSeconds = dailyData.isNotEmpty ? 999999 : 0;
         String maxDay = '';
 
         for (final data in dailyData) {
           final seconds = data['total_seconds'] as int? ?? 0;
-          totalSeconds += seconds;
           if (seconds > maxSeconds) {
             maxSeconds = seconds;
             maxDay = data['date'] as String? ?? '';
@@ -187,85 +303,99 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
           }
         }
 
-        final avgSeconds = dailyData.isEmpty ? 0 : totalSeconds ~/ dailyData.length;
+        final avgSeconds = _selectedTimeRange <= 0 ? 0 : totalSeconds ~/ _selectedTimeRange;
         
-        // Calculate trend (compare first half vs second half)
-        String trendText = 'No change';
+        // Compare selected period against the immediately previous period.
+        String trendText = '0%';
         IconData trendIcon = FluentIcons.remove;
         Color trendColor = Colors.grey;
-        
-        if (dailyData.length >= 4) {
-          final midPoint = dailyData.length ~/ 2;
-          int firstHalf = 0;
-          int secondHalf = 0;
-          
-          for (int i = 0; i < midPoint; i++) {
-            firstHalf += (dailyData[i]['total_seconds'] as int? ?? 0);
-          }
-          for (int i = midPoint; i < dailyData.length; i++) {
-            secondHalf += (dailyData[i]['total_seconds'] as int? ?? 0);
-          }
-          
-          if (firstHalf > 0) {
-            final change = ((secondHalf - firstHalf) / firstHalf * 100).round();
-            if (change > 5) {
-              trendText = '+$change%';
-              trendIcon = FluentIcons.up;
-              trendColor = Colors.orange;
-            } else if (change < -5) {
-              trendText = '$change%';
-              trendIcon = FluentIcons.down;
-              trendColor = Colors.green;
-            }
+
+        if (previousPeriodSeconds == 0 && totalSeconds > 0) {
+          trendText = 'New';
+          trendIcon = FluentIcons.up;
+          trendColor = Colors.orange;
+        } else if (previousPeriodSeconds > 0) {
+          final change =
+              ((totalSeconds - previousPeriodSeconds) / previousPeriodSeconds * 100)
+                  .round();
+
+          if (change > 0) {
+            trendText = '+$change%';
+            trendIcon = FluentIcons.up;
+            trendColor = Colors.orange;
+          } else if (change < 0) {
+            trendText = '$change%';
+            trendIcon = FluentIcons.down;
+            trendColor = Colors.green;
           }
         }
 
-        return Row(
-          children: [
-            Expanded(
-              child: _QuickStatCard(
-                icon: FluentIcons.timer,
-                title: 'Total Time',
-                value: _formatTime(totalSeconds),
-                subtitle: 'Last $_selectedTimeRange days',
-                accentColor: theme.accentColor,
-                isLight: isLight,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _QuickStatCard(
-                icon: FluentIcons.calendar,
-                title: 'Daily Average',
-                value: _formatTime(avgSeconds),
-                subtitle: 'Per day',
-                accentColor: Colors.teal,
-                isLight: isLight,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _QuickStatCard(
-                icon: FluentIcons.trophy2,
-                title: 'Peak Day',
-                value: maxDay.isEmpty ? '—' : DateFormat('EEE').format(DateTime.parse(maxDay)),
-                subtitle: maxDay.isEmpty ? 'No data' : _formatTime(maxSeconds),
-                accentColor: Colors.orange,
-                isLight: isLight,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _QuickStatCard(
-                icon: trendIcon,
-                title: 'Trend',
-                value: trendText,
-                subtitle: 'vs previous period',
-                accentColor: trendColor,
-                isLight: isLight,
-              ),
-            ),
-          ],
+        final cards = <Widget>[
+          _QuickStatCard(
+            icon: FluentIcons.timer,
+            title: 'Total Time',
+            value: _formatTime(totalSeconds),
+            subtitle: 'Last $_selectedTimeRange days',
+            accentColor: theme.accentColor,
+            isLight: isLight,
+          ),
+          _QuickStatCard(
+            icon: FluentIcons.calendar,
+            title: 'Daily Average',
+            value: _formatTime(avgSeconds),
+            subtitle: 'Per day',
+            accentColor: Colors.teal,
+            isLight: isLight,
+          ),
+          _QuickStatCard(
+            icon: FluentIcons.trophy2,
+            title: 'Peak Day',
+            value: maxDay.isEmpty ? '—' : DateFormat('EEE').format(DateTime.parse(maxDay)),
+            subtitle: maxDay.isEmpty ? 'No data' : _formatTime(maxSeconds),
+            accentColor: Colors.orange,
+            isLight: isLight,
+          ),
+          _QuickStatCard(
+            icon: trendIcon,
+            title: 'Trend',
+            value: trendText,
+            subtitle: 'vs previous $_selectedTimeRange days',
+            accentColor: trendColor,
+            isLight: isLight,
+          ),
+        ];
+
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final isCompact = constraints.maxWidth < 980;
+
+            if (!isCompact) {
+              return Row(
+                children: [
+                  Expanded(child: cards[0]),
+                  const SizedBox(width: 12),
+                  Expanded(child: cards[1]),
+                  const SizedBox(width: 12),
+                  Expanded(child: cards[2]),
+                  const SizedBox(width: 12),
+                  Expanded(child: cards[3]),
+                ],
+              );
+            }
+
+            final useSingleColumn = constraints.maxWidth < 560;
+            final cardWidth = useSingleColumn
+                ? constraints.maxWidth
+                : (constraints.maxWidth - 12) / 2;
+
+            return Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: cards
+                  .map((card) => SizedBox(width: cardWidth, child: card))
+                  .toList(),
+            );
+          },
         );
       },
     );
@@ -276,193 +406,271 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
       builder: (context, provider, child) {
         final dailyData = provider.dailyUsage;
 
-        return Container(
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            color: isLight
-                ? const Color(0xFFF9F9F9)
-                : const Color(0xFF2D2D2D),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: isLight
-                  ? const Color(0xFFE5E5E5)
-                  : const Color(0xFF3D3D3D),
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final isCompact = constraints.maxWidth < 700;
+            final safeCount = dailyData.isEmpty ? 1 : dailyData.length;
+            final minSlotWidth = isCompact ? 26.0 : 32.0;
+            final targetChartWidth = (safeCount * minSlotWidth) + 72;
+            final chartWidth = targetChartWidth > constraints.maxWidth
+                ? targetChartWidth
+                : constraints.maxWidth;
+            final barWidth =
+                ((chartWidth - 72) / (safeCount * 1.8)).clamp(8.0, 32.0).toDouble();
+
+            int xAxisLabelStep = 1;
+            if (dailyData.length > 1) {
+              final maxLabels =
+                  ((constraints.maxWidth - 56) / 42).floor().clamp(2, dailyData.length).toInt();
+              xAxisLabelStep = (dailyData.length / maxLabels).ceil();
+            }
+
+            return Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: isLight
+                    ? const Color(0xFFF9F9F9)
+                    : const Color(0xFF2D2D2D),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: isLight
+                      ? const Color(0xFFE5E5E5)
+                      : const Color(0xFF3D3D3D),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Daily Screen Time',
-                        style: theme.typography.bodyStrong,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Your usage over the past week',
-                        style: theme.typography.caption?.copyWith(
-                          color: isLight ? Colors.grey[130] : Colors.grey[100],
+                  if (isCompact)
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Daily Screen Time',
+                          style: theme.typography.bodyStrong,
                         ),
-                      ),
-                    ],
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 4,
+                        const SizedBox(height: 4),
+                        Text(
+                          'Your usage over the past $_selectedTimeRange days',
+                          style: theme.typography.caption?.copyWith(
+                            color: isLight ? Colors.grey[130] : Colors.grey[100],
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: theme.accentColor.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            'Last $_selectedTimeRange days',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: theme.accentColor,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    )
+                  else
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Daily Screen Time',
+                              style: theme.typography.bodyStrong,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Your usage over the past $_selectedTimeRange days',
+                              style: theme.typography.caption?.copyWith(
+                                color: isLight ? Colors.grey[130] : Colors.grey[100],
+                              ),
+                            ),
+                          ],
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: theme.accentColor.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            'Last $_selectedTimeRange days',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: theme.accentColor,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                    decoration: BoxDecoration(
-                      color: theme.accentColor.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      'Last 7 days',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: theme.accentColor,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    height: isCompact ? 200 : 220,
+                    child: dailyData.isEmpty
+                        ? _buildEmptyState(theme, isLight, FluentIcons.bar_chart4, 'No usage data available')
+                        : SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: SizedBox(
+                              width: chartWidth,
+                              child: BarChart(
+                                BarChartData(
+                                  alignment: BarChartAlignment.spaceAround,
+                                  maxY: _getMaxY(dailyData),
+                                  barTouchData: BarTouchData(
+                                    enabled: true,
+                                    touchTooltipData: BarTouchTooltipData(
+                                      getTooltipColor: (group) => isLight
+                                          ? Colors.white
+                                          : const Color(0xFF3D3D3D),
+                                      getTooltipItem: (group, groupIndex, rod, rodIndex) {
+                                        final date = DateTime.parse(
+                                          dailyData[groupIndex]['date'] as String,
+                                        );
+                                        final hours = rod.toY ~/ 3600;
+                                        final minutes = (rod.toY % 3600) ~/ 60;
+                                        return BarTooltipItem(
+                                          '${DateFormat('MMM d').format(date)}\n${hours}h ${minutes}m',
+                                          TextStyle(
+                                            color: isLight ? Colors.grey[160] : Colors.white,
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 12,
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                  titlesData: FlTitlesData(
+                                    show: true,
+                                    bottomTitles: AxisTitles(
+                                      sideTitles: SideTitles(
+                                        showTitles: true,
+                                        getTitlesWidget: (value, meta) {
+                                          final index = value.toInt();
+                                          if (index < 0 || index >= dailyData.length) {
+                                            return const SizedBox();
+                                          }
+
+                                          final dateStr = dailyData[index]['date'] as String;
+                                          final date = DateTime.parse(dateStr);
+                                          final isToday =
+                                              DateFormat('yyyy-MM-dd').format(DateTime.now()) == dateStr;
+                                          final shouldShow = isToday || index % xAxisLabelStep == 0;
+
+                                          if (!shouldShow) {
+                                            return const SizedBox();
+                                          }
+
+                                          return Padding(
+                                            padding: const EdgeInsets.only(top: 8),
+                                            child: Text(
+                                              isToday ? 'Today' : DateFormat('E').format(date),
+                                              style: TextStyle(
+                                                fontSize: 11,
+                                                fontWeight: isToday
+                                                    ? FontWeight.w600
+                                                    : FontWeight.normal,
+                                                color: isToday
+                                                    ? theme.accentColor
+                                                    : (isLight
+                                                        ? Colors.grey[130]
+                                                        : Colors.grey[100]),
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                        reservedSize: 30,
+                                      ),
+                                    ),
+                                    leftTitles: AxisTitles(
+                                      sideTitles: SideTitles(
+                                        showTitles: true,
+                                        getTitlesWidget: (value, meta) {
+                                          final hours = value ~/ 3600;
+                                          return Text(
+                                            '${hours}h',
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              color: isLight ? Colors.grey[130] : Colors.grey[100],
+                                            ),
+                                          );
+                                        },
+                                        reservedSize: 35,
+                                        interval: 3600,
+                                      ),
+                                    ),
+                                    topTitles: const AxisTitles(
+                                      sideTitles: SideTitles(showTitles: false),
+                                    ),
+                                    rightTitles: const AxisTitles(
+                                      sideTitles: SideTitles(showTitles: false),
+                                    ),
+                                  ),
+                                  borderData: FlBorderData(show: false),
+                                  gridData: FlGridData(
+                                    show: true,
+                                    drawVerticalLine: false,
+                                    horizontalInterval: 3600,
+                                    getDrawingHorizontalLine: (value) {
+                                      return FlLine(
+                                        color: isLight
+                                            ? Colors.grey[50]
+                                            : Colors.grey[150].withValues(alpha: 0.2),
+                                        strokeWidth: 1,
+                                      );
+                                    },
+                                  ),
+                                  barGroups: dailyData.asMap().entries.map((entry) {
+                                    final index = entry.key;
+                                    final data = entry.value;
+                                    final isToday =
+                                        DateFormat('yyyy-MM-dd').format(DateTime.now()) == data['date'];
+                                    return BarChartGroupData(
+                                      x: index,
+                                      barRods: [
+                                        BarChartRodData(
+                                          toY: (data['total_seconds'] as int).toDouble(),
+                                          gradient: LinearGradient(
+                                            colors: isToday
+                                                ? [theme.accentColor.lighter, theme.accentColor]
+                                                : [
+                                                    theme.accentColor.withValues(alpha: 0.7),
+                                                    theme.accentColor.withValues(alpha: 0.9),
+                                                  ],
+                                            begin: Alignment.topCenter,
+                                            end: Alignment.bottomCenter,
+                                          ),
+                                          width: barWidth,
+                                          borderRadius: const BorderRadius.only(
+                                            topLeft: Radius.circular(4),
+                                            topRight: Radius.circular(4),
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                                  }).toList(),
+                                ),
+                              ),
+                            ),
+                          ),
                   ),
                 ],
               ),
-              const SizedBox(height: 24),
-              SizedBox(
-                height: 220,
-                child: dailyData.isEmpty
-                    ? _buildEmptyState(theme, isLight, FluentIcons.bar_chart4, 'No usage data available')
-                    : BarChart(
-                        BarChartData(
-                          alignment: BarChartAlignment.spaceAround,
-                          maxY: _getMaxY(dailyData),
-                          barTouchData: BarTouchData(
-                            enabled: true,
-                            touchTooltipData: BarTouchTooltipData(
-                              getTooltipColor: (group) => isLight
-                                  ? Colors.white
-                                  : const Color(0xFF3D3D3D),
-                              getTooltipItem: (group, groupIndex, rod, rodIndex) {
-                                final date = DateTime.parse(
-                                  dailyData[groupIndex]['date'] as String,
-                                );
-                                final hours = rod.toY ~/ 3600;
-                                final minutes = (rod.toY % 3600) ~/ 60;
-                                return BarTooltipItem(
-                                  '${DateFormat('MMM d').format(date)}\n${hours}h ${minutes}m',
-                                  TextStyle(
-                                    color: isLight ? Colors.grey[160] : Colors.white,
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 12,
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                          titlesData: FlTitlesData(
-                            show: true,
-                            bottomTitles: AxisTitles(
-                              sideTitles: SideTitles(
-                                showTitles: true,
-                                getTitlesWidget: (value, meta) {
-                                  if (value.toInt() >= dailyData.length) {
-                                    return const SizedBox();
-                                  }
-                                  final date = DateTime.parse(
-                                    dailyData[value.toInt()]['date'] as String,
-                                  );
-                                  final isToday = DateFormat('yyyy-MM-dd').format(DateTime.now()) ==
-                                      dailyData[value.toInt()]['date'];
-                                  return Padding(
-                                    padding: const EdgeInsets.only(top: 8),
-                                    child: Text(
-                                      isToday ? 'Today' : DateFormat('E').format(date),
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        fontWeight: isToday ? FontWeight.w600 : FontWeight.normal,
-                                        color: isToday 
-                                            ? theme.accentColor 
-                                            : (isLight ? Colors.grey[130] : Colors.grey[100]),
-                                      ),
-                                    ),
-                                  );
-                                },
-                                reservedSize: 30,
-                              ),
-                            ),
-                            leftTitles: AxisTitles(
-                              sideTitles: SideTitles(
-                                showTitles: true,
-                                getTitlesWidget: (value, meta) {
-                                  final hours = value ~/ 3600;
-                                  return Text(
-                                    '${hours}h',
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      color: isLight ? Colors.grey[130] : Colors.grey[100],
-                                    ),
-                                  );
-                                },
-                                reservedSize: 35,
-                                interval: 3600,
-                              ),
-                            ),
-                            topTitles: const AxisTitles(
-                              sideTitles: SideTitles(showTitles: false),
-                            ),
-                            rightTitles: const AxisTitles(
-                              sideTitles: SideTitles(showTitles: false),
-                            ),
-                          ),
-                          borderData: FlBorderData(show: false),
-                          gridData: FlGridData(
-                            show: true,
-                            drawVerticalLine: false,
-                            horizontalInterval: 3600,
-                            getDrawingHorizontalLine: (value) {
-                              return FlLine(
-                                color: isLight
-                                    ? Colors.grey[50]!
-                                    : Colors.grey[150]!.withOpacity(0.2),
-                                strokeWidth: 1,
-                              );
-                            },
-                          ),
-                          barGroups: dailyData.asMap().entries.map((entry) {
-                            final index = entry.key;
-                            final data = entry.value;
-                            final isToday = DateFormat('yyyy-MM-dd').format(DateTime.now()) ==
-                                data['date'];
-                            return BarChartGroupData(
-                              x: index,
-                              barRods: [
-                                BarChartRodData(
-                                  toY: (data['total_seconds'] as int).toDouble(),
-                                  gradient: LinearGradient(
-                                    colors: isToday
-                                        ? [theme.accentColor.lighter, theme.accentColor]
-                                        : [theme.accentColor.withOpacity(0.7), theme.accentColor.withOpacity(0.9)],
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                  ),
-                                  width: 32,
-                                  borderRadius: const BorderRadius.only(
-                                    topLeft: Radius.circular(4),
-                                    topRight: Radius.circular(4),
-                                  ),
-                                ),
-                              ],
-                            );
-                          }).toList(),
-                        ),
-                      ),
-              ),
-            ],
-          ),
+            );
+          },
         );
       },
     );
@@ -545,15 +753,23 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
         } else {
           // Calculate Productive Time String
           double pScore = provider.focusScore;
-          if (pScore >= 80) productiveTime = 'Excellent focus';
-          else if (pScore >= 50) productiveTime = 'Good focus';
-          else productiveTime = 'Needs improvement';
+          if (pScore >= 80) {
+            productiveTime = 'Excellent focus';
+          } else if (pScore >= 50) {
+            productiveTime = 'Good focus';
+          } else {
+            productiveTime = 'Needs improvement';
+          }
 
           // Calculate Total Time Insight String
           int hours = provider.totalSecondsToday ~/ 3600;
-          if (hours > 8) totalTime = 'Very High (>8h)';
-          else if (hours > 4) totalTime = 'Moderate (4h-8h)';
-          else totalTime = 'Light (<4h)';
+          if (hours > 8) {
+            totalTime = 'Very High (>8h)';
+          } else if (hours > 4) {
+            totalTime = 'Moderate (4h-8h)';
+          } else {
+            totalTime = 'Light (<4h)';
+          }
 
           // Calculate focus sessions (matching dashboard focus score rule)
           focusSessions = '${provider.focusScore.toStringAsFixed(0)}%';
@@ -637,18 +853,23 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
   Widget _buildTrendsCard(FluentThemeData theme, bool isLight) {
     return Consumer<ScreenTimeProvider>(
       builder: (context, provider, child) {
-        final dailyData = provider.dailyUsage;
-        
-        // Calculate week over week comparison
-        int thisWeek = 0;
-        int lastWeek = 0;
-        
-        for (int i = 0; i < dailyData.length && i < 7; i++) {
-          thisWeek += (dailyData[i]['total_seconds'] as int? ?? 0);
+        final currentPeriod = provider.currentPeriodTotalSeconds;
+        final previousPeriod = provider.previousPeriodTotalSeconds;
+        final maxValue =
+            currentPeriod > previousPeriod ? currentPeriod : previousPeriod;
+
+        String deltaLabel = 'No change from previous period';
+        if (previousPeriod == 0 && currentPeriod > 0) {
+          deltaLabel = 'First tracked period in this range';
+        } else if (previousPeriod > 0) {
+          final deltaPercent =
+              ((currentPeriod - previousPeriod) / previousPeriod * 100).round();
+          if (deltaPercent > 0) {
+            deltaLabel = '+$deltaPercent% more than previous $_selectedTimeRange days';
+          } else if (deltaPercent < 0) {
+            deltaLabel = '$deltaPercent% less than previous $_selectedTimeRange days';
+          }
         }
-        
-        // Simulated last week data (would come from database in real app)
-        lastWeek = (thisWeek * 0.9).round(); // Placeholder
 
         return Container(
           padding: const EdgeInsets.all(20),
@@ -667,24 +888,31 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Weekly Comparison',
+                'Period Comparison',
                 style: theme.typography.bodyStrong,
               ),
               const SizedBox(height: 16),
               _ComparisonBar(
-                label: 'This Week',
-                value: thisWeek,
-                maxValue: thisWeek > lastWeek ? thisWeek : lastWeek,
+                label: 'Current $_selectedTimeRange days',
+                value: currentPeriod,
+                maxValue: maxValue,
                 color: theme.accentColor,
                 isLight: isLight,
               ),
               const SizedBox(height: 16),
               _ComparisonBar(
-                label: 'Last Week',
-                value: lastWeek,
-                maxValue: thisWeek > lastWeek ? thisWeek : lastWeek,
-                color: Colors.grey[100]!,
+                label: 'Previous $_selectedTimeRange days',
+                value: previousPeriod,
+                maxValue: maxValue,
+                color: Colors.grey[100],
                 isLight: isLight,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                deltaLabel,
+                style: theme.typography.caption?.copyWith(
+                  color: isLight ? Colors.grey[130] : Colors.grey[100],
+                ),
               ),
             ],
           ),
@@ -827,7 +1055,7 @@ class _QuickStatCard extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: accentColor.withOpacity(0.1),
+                  color: accentColor.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Icon(icon, size: 14, color: accentColor),
@@ -889,7 +1117,7 @@ class _AppListItem extends StatelessWidget {
             width: 24,
             height: 24,
             decoration: BoxDecoration(
-              color: _getRankColor(rank).withOpacity(0.1),
+              color: _getRankColor(rank).withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(6),
             ),
             child: Center(
@@ -936,11 +1164,11 @@ class _AppListItem extends StatelessWidget {
       case 1:
         return Colors.orange;
       case 2:
-        return Colors.grey[120]!;
+        return Colors.grey[120];
       case 3:
         return Colors.orange.dark;
       default:
-        return Colors.grey[100]!;
+        return Colors.grey[100];
     }
   }
 }

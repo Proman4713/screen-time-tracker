@@ -5,12 +5,14 @@ import '../services/app_icon_service.dart';
 /// A widget that displays an app's extracted icon with a fallback.
 class AppIconWidget extends StatefulWidget {
   final String processName;
+  final String? executablePath;
   final double size;
   final IconData fallbackIcon;
 
   const AppIconWidget({
     super.key,
     required this.processName,
+    this.executablePath,
     this.size = 20,
     this.fallbackIcon = FluentIcons.app_icon_default,
   });
@@ -32,14 +34,18 @@ class _AppIconWidgetState extends State<AppIconWidget> {
   @override
   void didUpdateWidget(AppIconWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.processName != widget.processName) {
+    if (oldWidget.processName != widget.processName ||
+        oldWidget.executablePath != widget.executablePath) {
       _loaded = false;
       _loadIcon();
     }
   }
 
   Future<void> _loadIcon() async {
-    final path = await AppIconService.instance.getIconPath(widget.processName);
+    final path = await AppIconService.instance.getIconPath(
+      widget.processName,
+      executablePath: widget.executablePath,
+    );
     if (mounted) {
       setState(() {
         _iconPath = path;

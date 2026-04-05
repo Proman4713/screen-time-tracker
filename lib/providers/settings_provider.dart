@@ -9,6 +9,14 @@ class SettingsProvider with ChangeNotifier {
   late SharedPreferences _prefs;
   bool _isInitialized = false;
 
+  String _normalizeProcessName(String value) {
+    final normalized = value.trim().toLowerCase();
+    if (normalized.endsWith('.exe')) {
+      return normalized.substring(0, normalized.length - 4);
+    }
+    return normalized;
+  }
+
   // General Settings
   bool _startWithWindows = false;
   bool _minimizeToTray = true;
@@ -65,7 +73,11 @@ class SettingsProvider with ChangeNotifier {
     _showNotifications = _prefs.getBool('showNotifications') ?? true;
     _idleTimeout = _prefs.getInt('idleTimeout') ?? 5;
     _trackingInterval = _prefs.getInt('trackingInterval') ?? 1;
-    _ignoredApps = _prefs.getStringList('ignoredApps') ?? [];
+    _ignoredApps = (_prefs.getStringList('ignoredApps') ?? [])
+      .map(_normalizeProcessName)
+      .where((name) => name.isNotEmpty)
+      .toSet()
+      .toList();
     _productiveApps = _prefs.getStringList('productiveApps') ?? [];
     _enableDailyGoal = _prefs.getBool('enableDailyGoal') ?? false;
     _dailyGoalHours = _prefs.getInt('dailyGoalHours') ?? 4;
@@ -79,6 +91,11 @@ class SettingsProvider with ChangeNotifier {
     final rulesJson = _prefs.getStringList('blockRules') ?? [];
     _blockRules = rulesJson
         .map((json) => AppBlock.fromJson(jsonDecode(json)))
+        .map(
+          (rule) => rule.copyWith(
+            processName: _normalizeProcessName(rule.processName),
+          ),
+        )
         .toList();
 
     // Setup launch at startup
@@ -152,24 +169,33 @@ class SettingsProvider with ChangeNotifier {
   }
 
   Future<void> addIgnoredApp(String appName) async {
-    if (_ignoredApps.contains(appName)) return;
+    final normalizedName = _normalizeProcessName(appName);
+    if (normalizedName.isEmpty) return;
+
+    if (_ignoredApps.any((app) => _normalizeProcessName(app) == normalizedName)) {
+      return;
+    }
     
-    _ignoredApps.add(appName);
+    _ignoredApps.add(normalizedName);
     await _prefs.setStringList('ignoredApps', _ignoredApps);
     notifyListeners();
   }
 
   Future<void> removeIgnoredApp(String appName) async {
-    if (!_ignoredApps.contains(appName)) return;
-    
-    _ignoredApps.remove(appName);
+    final normalizedName = _normalizeProcessName(appName);
+    final before = _ignoredApps.length;
+    _ignoredApps.removeWhere((app) => _normalizeProcessName(app) == normalizedName);
+    if (_ignoredApps.length == before) return;
+
     await _prefs.setStringList('ignoredApps', _ignoredApps);
     notifyListeners();
   }
 
   bool isAppIgnored(String appName) {
+    final normalizedName = _normalizeProcessName(appName);
     return _ignoredApps.any((ignored) => 
-      appName.toLowerCase().contains(ignored.toLowerCase())
+      normalizedName == _normalizeProcessName(ignored) ||
+      normalizedName.contains(_normalizeProcessName(ignored))
     );
   }
 
@@ -250,21 +276,38 @@ class SettingsProvider with ChangeNotifier {
 
   // Blocking Settings Setters
   Future<void> addBlockRule(AppBlock rule) async {
-    _blockRules.add(rule);
+    final normalizedName = _normalizeProcessName(rule.processName);
+    final normalizedRule = rule.copyWith(processName: normalizedName);
+    final existingIndex = _blockRules.indexWhere(
+      (r) => _normalizeProcessName(r.processName) == normalizedName,
+    );
+
+    if (existingIndex != -1) {
+      _blockRules[existingIndex] = normalizedRule;
+    } else {
+      _blockRules.add(normalizedRule);
+    }
     await _saveBlockRules();
     notifyListeners();
   }
 
   Future<void> removeBlockRule(String processName) async {
-    _blockRules.removeWhere((r) => r.processName == processName);
+    final normalizedName = _normalizeProcessName(processName);
+    _blockRules.removeWhere(
+      (r) => _normalizeProcessName(r.processName) == normalizedName,
+    );
     await _saveBlockRules();
     notifyListeners();
   }
 
   Future<void> updateBlockRule(AppBlock updatedRule) async {
-    final index = _blockRules.indexWhere((r) => r.processName == updatedRule.processName);
+    final normalizedName = _normalizeProcessName(updatedRule.processName);
+    final normalizedRule = updatedRule.copyWith(processName: normalizedName);
+    final index = _blockRules.indexWhere(
+      (r) => _normalizeProcessName(r.processName) == normalizedName,
+    );
     if (index != -1) {
-      _blockRules[index] = updatedRule;
+      _blockRules[index] = normalizedRule;
       await _saveBlockRules();
       notifyListeners();
     }

@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import '../models/app_usage.dart';
 import '../services/database_service.dart';
 import '../services/process_tracker_service.dart';
 import '../services/notification_service.dart';
 import '../models/app_block.dart';
+import 'settings_provider.dart';
 
 class ScreenTimeProvider extends ChangeNotifier {
   final DatabaseService _databaseService = DatabaseService.instance;
@@ -13,9 +16,12 @@ class ScreenTimeProvider extends ChangeNotifier {
   bool _isTracking = false;
   String _currentApp = '';
   String _currentWindowTitle = '';
+  int _liveTodayTotalSeconds = 0;
   int _totalSecondsToday = 0;
+  int _currentPeriodTotalSeconds = 0;
+  int _previousPeriodTotalSeconds = 0;
   DateTime _selectedDate = DateTime.now();
-  int _selectedDays = 1; // 1 = today, 7 = week, 30 = month
+  int _selectedDays = 1; // 1 = today, common ranges: 7, 14, 30
   bool _isAscending = false;
   int _dataRetentionDays = 30;
 
@@ -23,19 +29,24 @@ class ScreenTimeProvider extends ChangeNotifier {
   List<AppUsage> _todayUsage = [];
   List<AggregatedAppUsage> _aggregatedUsage = [];
   List<Map<String, dynamic>> _dailyUsage = [];
+  int _dailyUsageWindowDays = 7;
   List<String> _productiveApps = [];
 
   // Getters
   bool get isTracking => _isTracking;
   String get currentApp => _currentApp;
   String get currentWindowTitle => _currentWindowTitle;
+  int get liveTodayTotalSeconds => _liveTodayTotalSeconds;
   int get totalSecondsToday => _totalSecondsToday;
+  int get currentPeriodTotalSeconds => _currentPeriodTotalSeconds;
+  int get previousPeriodTotalSeconds => _previousPeriodTotalSeconds;
   DateTime get selectedDate => _selectedDate;
   int get selectedDays => _selectedDays;
   bool get isAscending => _isAscending;
   List<AppUsage> get todayUsage => _todayUsage;
   List<AggregatedAppUsage> get aggregatedUsage => _aggregatedUsage;
   List<Map<String, dynamic>> get dailyUsage => _dailyUsage;
+  int get dailyUsageWindowDays => _dailyUsageWindowDays;
 
   String get formattedTotalTime {
     final hours = _totalSecondsToday ~/ 3600;
@@ -69,11 +80,54 @@ class ScreenTimeProvider extends ChangeNotifier {
         name.toLowerCase().contains(app.toLowerCase()));
   }
 
-  ScreenTimeProvider({List<AppBlock>? initialBlockRules}) {
-    if (initialBlockRules != null) {
-      _processTracker.blockRules = initialBlockRules;
+  ScreenTimeProvider({SettingsProvider? initialSettings}) {
+    if (initialSettings != null) {
+      applySettings(initialSettings, notifyListenersIfNeeded: false);
     }
     _initialize();
+  }
+
+  String _normalizeProcessToken(String value) {
+    final normalized = value.trim().toLowerCase();
+    if (normalized.endsWith('.exe')) {
+      return normalized.substring(0, normalized.length - 4);
+    }
+    return normalized;
+  }
+
+  void applySettings(
+    SettingsProvider settings, {
+    bool notifyListenersIfNeeded = true,
+  }) {
+    setTrackingInterval(settings.trackingInterval);
+    setIdleTimeout(settings.idleTimeout);
+    setIgnoredApps(settings.ignoredApps);
+
+    final productiveChanged =
+        !listEquals(_productiveApps, settings.productiveApps);
+    if (productiveChanged) {
+      _productiveApps = List<String>.from(settings.productiveApps);
+    }
+
+    configureNotifications(
+      enableDailyGoal: settings.enableDailyGoal,
+      dailyGoalHours: settings.dailyGoalHours,
+      enableBreakReminders: settings.enableBreakReminders,
+      breakReminderIntervalMinutes: settings.breakReminderInterval,
+    );
+
+    setPauseOnLock(settings.pauseOnLock);
+    setBlockRules(settings.blockRules);
+    setShowNotifications(settings.showNotifications);
+
+    if (_dataRetentionDays != settings.dataRetentionDays) {
+      _dataRetentionDays = settings.dataRetentionDays;
+      unawaited(pruneOldData());
+    }
+
+    if (productiveChanged && notifyListenersIfNeeded) {
+      notifyListeners();
+    }
   }
 
   Future<void> _initialize() async {
@@ -85,8 +139,19 @@ class ScreenTimeProvider extends ChangeNotifier {
     };
 
     _processTracker.onTotalTimeUpdated = (totalSeconds) {
-      _totalSecondsToday = totalSeconds;
-      notifyListeners();
+      final liveChanged = _liveTodayTotalSeconds != totalSeconds;
+      _liveTodayTotalSeconds = totalSeconds;
+
+      var selectedRangeChanged = false;
+      if (_selectedDays == 1 && _totalSecondsToday != totalSeconds) {
+        _totalSecondsToday = totalSeconds;
+        _currentPeriodTotalSeconds = totalSeconds;
+        selectedRangeChanged = true;
+      }
+
+      if (liveChanged || selectedRangeChanged) {
+        notifyListeners();
+      }
     };
 
     _processTracker.onBreakReminderReached = (minutes) {
@@ -97,12 +162,21 @@ class ScreenTimeProvider extends ChangeNotifier {
       NotificationService().showDailyGoalReached(hours);
     };
 
+    _processTracker.onBlockedAppGraceStarted = (processName, graceSeconds) {
+      NotificationService().showBlockGraceStarted(processName, graceSeconds);
+    };
+
+    _processTracker.onBlockedAppGraceWarning = (processName, secondsRemaining) {
+      NotificationService().showBlockGraceWarning(processName, secondsRemaining);
+    };
+
     _processTracker.onBlockedAppAttempt = (processName) {
       NotificationService().showBlockedApp(processName);
     };
 
     // Load initial data
     await loadTodayData();
+    await loadPeriodComparison(_selectedDays);
     await loadDailyUsage();
 
     // Auto-prune old data
@@ -156,7 +230,14 @@ class ScreenTimeProvider extends ChangeNotifier {
   }
 
   void setIgnoredApps(List<String> apps) {
-    _processTracker.customIgnoredApps = apps;
+    final normalizedApps = apps
+        .map(_normalizeProcessToken)
+        .where((app) => app.isNotEmpty)
+        .toList();
+    if (listEquals(_processTracker.customIgnoredApps, normalizedApps)) {
+      return;
+    }
+    _processTracker.customIgnoredApps = normalizedApps;
   }
 
   void configureNotifications({
@@ -174,7 +255,14 @@ class ScreenTimeProvider extends ChangeNotifier {
   }
 
   void setProductiveApps(List<String> apps) {
-    _productiveApps = apps;
+    final normalizedApps = apps
+        .map((app) => app.trim())
+        .where((app) => app.isNotEmpty)
+        .toList();
+    if (listEquals(_productiveApps, normalizedApps)) {
+      return;
+    }
+    _productiveApps = normalizedApps;
     notifyListeners();
   }
 
@@ -183,7 +271,7 @@ class ScreenTimeProvider extends ChangeNotifier {
   }
 
   void setBlockRules(List<AppBlock> rules) {
-    _processTracker.blockRules = rules;
+    _processTracker.blockRules = List<AppBlock>.from(rules);
   }
 
   void setShowNotifications(bool value) {
@@ -201,11 +289,11 @@ class ScreenTimeProvider extends ChangeNotifier {
     try {
       final deletedCount = await _databaseService.deleteOldRecords(_dataRetentionDays);
       if (deletedCount > 0) {
-        print('Pruned $deletedCount old records (Retention: $_dataRetentionDays days)');
-        await loadDailyUsage(); // Refresh chart if today's start might have changed (though unlikely to affect last 7 days unless retention is very low)
+        debugPrint('Pruned $deletedCount old records (Retention: $_dataRetentionDays days)');
+        await loadDailyUsage(_dailyUsageWindowDays);
       }
     } catch (e) {
-      print('Error pruning old data: $e');
+      debugPrint('Error pruning old data: $e');
     }
   }
 
@@ -225,11 +313,39 @@ class ScreenTimeProvider extends ChangeNotifier {
     final endDate = DateTime(today.year, today.month, today.day);
     final startDate = endDate.subtract(Duration(days: days - 1));
 
-    await _loadUsageData(startDate, endDate);
+    await _loadUsageData(startDate, endDate, notifyListenersIfNeeded: false);
+
+    // Keep "Today" range in sync with live tracker ticks when available.
+    if (days == 1 && _liveTodayTotalSeconds > _totalSecondsToday) {
+      _totalSecondsToday = _liveTodayTotalSeconds;
+    }
+
+    await loadPeriodComparison(days, notifyListenersIfNeeded: false);
+
+    if (days == 1 && _currentPeriodTotalSeconds < _totalSecondsToday) {
+      _currentPeriodTotalSeconds = _totalSecondsToday;
+    }
+
     notifyListeners();
   }
 
-  Future<void> _loadUsageData(DateTime startDate, DateTime endDate) async {
+  Future<void> loadPeriodComparison(
+    int days, {
+    bool notifyListenersIfNeeded = true,
+  }) async {
+    final comparison = await _databaseService.getPeriodComparison(days);
+    _currentPeriodTotalSeconds = comparison['currentTotalSeconds'] ?? 0;
+    _previousPeriodTotalSeconds = comparison['previousTotalSeconds'] ?? 0;
+    if (notifyListenersIfNeeded) {
+      notifyListeners();
+    }
+  }
+
+  Future<void> _loadUsageData(
+    DateTime startDate,
+    DateTime endDate, {
+    bool notifyListenersIfNeeded = true,
+  }) async {
     final usageList = await _databaseService.getUsageForDateRange(startDate, endDate);
     _todayUsage = usageList;
 
@@ -243,8 +359,12 @@ class ScreenTimeProvider extends ChangeNotifier {
     // Aggregate by process
     final Map<String, int> processUsage = {};
     for (final usage in usageList) {
-      processUsage[usage.processName] = 
-          (processUsage[usage.processName] ?? 0) + usage.usageSeconds;
+      final normalizedName = _normalizeProcessToken(usage.processName);
+      if (normalizedName.isEmpty) {
+        continue;
+      }
+      processUsage[normalizedName] =
+          (processUsage[normalizedName] ?? 0) + usage.usageSeconds;
     }
 
     // Convert to aggregated list
@@ -264,17 +384,22 @@ class ScreenTimeProvider extends ChangeNotifier {
     // Sort by usage
     _sortAggregatedUsage();
 
-    notifyListeners();
+    if (notifyListenersIfNeeded) {
+      notifyListeners();
+    }
   }
 
-  Future<void> loadDailyUsage() async {
-    _dailyUsage = await _databaseService.getDailyUsage(7);
+  Future<void> loadDailyUsage([int days = 7]) async {
+    _dailyUsageWindowDays = days;
+    _dailyUsage = await _databaseService.getDailyUsage(days);
     notifyListeners();
   }
 
   Future<void> refreshData() async {
-    await loadTodayData();
-    await loadDailyUsage();
+    await Future.wait([
+      loadDataForDays(_selectedDays),
+      loadDailyUsage(_dailyUsageWindowDays),
+    ]);
   }
 
   void setSelectedDate(DateTime date) {

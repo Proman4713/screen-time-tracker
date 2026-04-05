@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:provider/provider.dart';
 import '../providers/screen_time_provider.dart';
 import '../providers/theme_provider.dart';
 import '../providers/settings_provider.dart';
+import '../services/app_icon_service.dart';
 import '../services/installed_apps_service.dart';
 import '../services/data_sync_service.dart';
 import '../services/database_service.dart';
@@ -724,8 +727,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final controller = TextEditingController();
     bool isLoadingApps = true;
     bool hasStartedLoading = false;
-    List<RunningApp> runningApps = [];
-    RunningApp? selectedApp;
+    bool forceRefreshInstalledApps = false;
+    List<InstalledApp> installedApps = [];
+    final Map<String, String> installedExecutablePaths = {};
+    InstalledApp? selectedApp;
 
     await showDialog(
       context: context,
@@ -733,16 +738,68 @@ class _SettingsScreenState extends State<SettingsScreen> {
         builder: (context, setDialogState) {
           if (!hasStartedLoading) {
             hasStartedLoading = true;
-            InstalledAppsService.getRunningApps().then((apps) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) {
-                  setDialogState(() {
-                    runningApps = apps;
-                    isLoadingApps = false;
-                  });
+            () async {
+              try {
+                final apps = await InstalledAppsService.getInstalledApps(
+                  forceRefresh: forceRefreshInstalledApps,
+                );
+
+                if (!mounted) {
+                  return;
                 }
-              });
-            });
+
+                setDialogState(() {
+                  installedApps = apps;
+                  isLoadingApps = false;
+                  forceRefreshInstalledApps = false;
+                  installedExecutablePaths
+                    ..clear()
+                    ..addEntries(
+                      apps.where((app) => app.executablePath != null).map(
+                            (app) => MapEntry(
+                              app.processName.toLowerCase(),
+                              app.executablePath!,
+                            ),
+                          ),
+                    );
+
+                  if (selectedApp != null &&
+                      !apps.any(
+                        (app) =>
+                            app.processName.toLowerCase() ==
+                            selectedApp!.processName.toLowerCase(),
+                      )) {
+                    selectedApp = null;
+                  }
+                });
+
+                // Warm icon cache for the first visible results so logos appear quickly.
+                unawaited(() async {
+                  final prefetched = apps
+                      .where((app) => app.executablePath != null)
+                      .take(20)
+                      .toList();
+                  for (final app in prefetched) {
+                    await AppIconService.instance.getIconPath(
+                      app.processName,
+                      executablePath: app.executablePath,
+                    );
+                  }
+                }());
+              } catch (e) {
+                if (!mounted) {
+                  return;
+                }
+
+                setDialogState(() {
+                  installedApps = [];
+                  isLoadingApps = false;
+                  forceRefreshInstalledApps = false;
+                  installedExecutablePaths.clear();
+                  selectedApp = null;
+                });
+              }
+            }();
           }
 
           return ContentDialog(
@@ -756,9 +813,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   const Text('Apps in this list will not be tracked.'),
                   const SizedBox(height: 16),
 
-                  // Running Apps Dropdown
+                  // Installed Apps Dropdown
                   Text(
-                    'Select from running apps:',
+                    'Select from installed apps:',
                     style: FluentTheme.of(context).typography.caption,
                   ),
                   const SizedBox(height: 4),
@@ -767,18 +824,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       Expanded(
                         child: isLoadingApps
                             ? const ProgressRing(strokeWidth: 2)
-                            : ComboBox<RunningApp>(
+                            : ComboBox<InstalledApp>(
                                 isExpanded: true,
-                                placeholder: const Text(
-                                  'Searching running apps...',
+                                placeholder: Text(
+                                  installedApps.isEmpty
+                                      ? 'No installed apps found'
+                                      : 'Select an installed app',
                                 ),
                                 value: selectedApp,
-                                items: runningApps.map((app) {
-                                  return ComboBoxItem<RunningApp>(
+                                items: installedApps.map((app) {
+                                  return ComboBoxItem<InstalledApp>(
                                     value: app,
-                                    child: Text(
-                                      '${app.windowTitle} (${app.processName})',
-                                      overflow: TextOverflow.ellipsis,
+                                    child: Row(
+                                      children: [
+                                        AppIconWidget(
+                                          processName: app.processName,
+                                          executablePath: app.executablePath,
+                                          size: 16,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Text(
+                                            '${app.displayName} (${app.processName})',
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   );
                                 }).toList(),
@@ -792,13 +863,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       const SizedBox(width: 8),
                       IconButton(
                         icon: const Icon(FluentIcons.refresh),
-                        onPressed: () {
-                          setDialogState(() {
-                            isLoadingApps = true;
-                            hasStartedLoading = false;
-                            selectedApp = null;
-                          });
-                        },
+                        onPressed: isLoadingApps
+                            ? null
+                            : () {
+                                setDialogState(() {
+                                  isLoadingApps = true;
+                                  hasStartedLoading = false;
+                                  forceRefreshInstalledApps = true;
+                                  selectedApp = null;
+                                });
+                              },
                       ),
                       const SizedBox(width: 8),
                       FilledButton(
@@ -806,6 +880,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         onPressed: selectedApp == null
                             ? null
                             : () async {
+                                await AppIconService.instance.getIconPath(
+                                  selectedApp!.processName,
+                                  executablePath: selectedApp!.executablePath,
+                                );
                                 await settings.addIgnoredApp(
                                   selectedApp!.processName,
                                 );
@@ -814,6 +892,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ],
                   ),
+
+                  if (!isLoadingApps && installedApps.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        'No installed apps found. Click refresh or add manually below.',
+                        style: FluentTheme.of(context).typography.caption,
+                      ),
+                    ),
 
                   const SizedBox(height: 16),
                   const Divider(),
@@ -861,6 +948,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           return ListTile(
                             leading: AppIconWidget(
                               processName: app,
+                              executablePath:
+                                  installedExecutablePaths[app.toLowerCase()],
                               size: 20,
                             ),
                             title: Text(app),
@@ -897,8 +986,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final controller = TextEditingController();
     bool isLoadingApps = true;
     bool hasStartedLoading = false;
-    List<RunningApp> runningApps = [];
-    RunningApp? selectedApp;
+    bool forceRefreshInstalledApps = false;
+    List<InstalledApp> installedApps = [];
+    final Map<String, String> installedExecutablePaths = {};
+    InstalledApp? selectedApp;
 
     await showDialog(
       context: context,
@@ -906,16 +997,68 @@ class _SettingsScreenState extends State<SettingsScreen> {
         builder: (context, setDialogState) {
           if (!hasStartedLoading) {
             hasStartedLoading = true;
-            InstalledAppsService.getRunningApps().then((apps) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) {
-                  setDialogState(() {
-                    runningApps = apps;
-                    isLoadingApps = false;
-                  });
+            () async {
+              try {
+                final apps = await InstalledAppsService.getInstalledApps(
+                  forceRefresh: forceRefreshInstalledApps,
+                );
+
+                if (!mounted) {
+                  return;
                 }
-              });
-            });
+
+                setDialogState(() {
+                  installedApps = apps;
+                  isLoadingApps = false;
+                  forceRefreshInstalledApps = false;
+                  installedExecutablePaths
+                    ..clear()
+                    ..addEntries(
+                      apps.where((app) => app.executablePath != null).map(
+                            (app) => MapEntry(
+                              app.processName.toLowerCase(),
+                              app.executablePath!,
+                            ),
+                          ),
+                    );
+
+                  if (selectedApp != null &&
+                      !apps.any(
+                        (app) =>
+                            app.processName.toLowerCase() ==
+                            selectedApp!.processName.toLowerCase(),
+                      )) {
+                    selectedApp = null;
+                  }
+                });
+
+                // Warm icon cache for the first visible results so logos appear quickly.
+                unawaited(() async {
+                  final prefetched = apps
+                      .where((app) => app.executablePath != null)
+                      .take(20)
+                      .toList();
+                  for (final app in prefetched) {
+                    await AppIconService.instance.getIconPath(
+                      app.processName,
+                      executablePath: app.executablePath,
+                    );
+                  }
+                }());
+              } catch (e) {
+                if (!mounted) {
+                  return;
+                }
+
+                setDialogState(() {
+                  installedApps = [];
+                  isLoadingApps = false;
+                  forceRefreshInstalledApps = false;
+                  installedExecutablePaths.clear();
+                  selectedApp = null;
+                });
+              }
+            }();
           }
 
           return ContentDialog(
@@ -931,9 +1074,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   const SizedBox(height: 16),
 
-                  // Running Apps Dropdown
+                  // Installed Apps Dropdown
                   Text(
-                    'Select from running apps:',
+                    'Select from installed apps:',
                     style: FluentTheme.of(context).typography.caption,
                   ),
                   const SizedBox(height: 4),
@@ -942,18 +1085,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       Expanded(
                         child: isLoadingApps
                             ? const ProgressRing(strokeWidth: 2)
-                            : ComboBox<RunningApp>(
+                            : ComboBox<InstalledApp>(
                                 isExpanded: true,
-                                placeholder: const Text(
-                                  'Searching running apps...',
+                                placeholder: Text(
+                                  installedApps.isEmpty
+                                      ? 'No installed apps found'
+                                      : 'Select an installed app',
                                 ),
                                 value: selectedApp,
-                                items: runningApps.map((app) {
-                                  return ComboBoxItem<RunningApp>(
+                                items: installedApps.map((app) {
+                                  return ComboBoxItem<InstalledApp>(
                                     value: app,
-                                    child: Text(
-                                      '${app.windowTitle} (${app.processName})',
-                                      overflow: TextOverflow.ellipsis,
+                                    child: Row(
+                                      children: [
+                                        AppIconWidget(
+                                          processName: app.processName,
+                                          executablePath: app.executablePath,
+                                          size: 16,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Text(
+                                            '${app.displayName} (${app.processName})',
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   );
                                 }).toList(),
@@ -967,13 +1124,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       const SizedBox(width: 8),
                       IconButton(
                         icon: const Icon(FluentIcons.refresh),
-                        onPressed: () {
-                          setDialogState(() {
-                            isLoadingApps = true;
-                            hasStartedLoading = false;
-                            selectedApp = null;
-                          });
-                        },
+                        onPressed: isLoadingApps
+                            ? null
+                            : () {
+                                setDialogState(() {
+                                  isLoadingApps = true;
+                                  hasStartedLoading = false;
+                                  forceRefreshInstalledApps = true;
+                                  selectedApp = null;
+                                });
+                              },
                       ),
                       const SizedBox(width: 8),
                       FilledButton(
@@ -981,6 +1141,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         onPressed: selectedApp == null
                             ? null
                             : () async {
+                                await AppIconService.instance.getIconPath(
+                                  selectedApp!.processName,
+                                  executablePath: selectedApp!.executablePath,
+                                );
                                 await settings.addProductiveApp(
                                   selectedApp!.processName,
                                 );
@@ -989,6 +1153,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ],
                   ),
+
+                  if (!isLoadingApps && installedApps.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        'No installed apps found. Click refresh or add manually below.',
+                        style: FluentTheme.of(context).typography.caption,
+                      ),
+                    ),
 
                   const SizedBox(height: 16),
                   const Divider(),
@@ -1036,6 +1209,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           return ListTile(
                             leading: AppIconWidget(
                               processName: app,
+                              executablePath:
+                                  installedExecutablePaths[app.toLowerCase()],
                               size: 20,
                               fallbackIcon: FluentIcons.favorite_star,
                             ),
@@ -1116,39 +1291,260 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  void _showImportDialog(BuildContext context) async {
+  void _showImportDialog(
+    BuildContext context, {
+    String? initialFilePath,
+    ImportMode initialMode = ImportMode.merge,
+  }) async {
+    String modeLabel(ImportMode mode) {
+      switch (mode) {
+        case ImportMode.merge:
+          return 'Merge safely';
+        case ImportMode.replace:
+          return 'Replace existing data';
+      }
+    }
+
+    String modeDescription(ImportMode mode) {
+      switch (mode) {
+        case ImportMode.merge:
+          return 'Skips duplicates and keeps the highest totals for matching records.';
+        case ImportMode.replace:
+          return 'Clears current usage history before importing file data.';
+      }
+    }
+
+    final parentContext = context;
+    String? selectedFilePath = initialFilePath;
+    ImportMode selectedMode = initialMode;
+    ImportPreview? preview;
+    bool isBusy = false;
+
     await showDialog(
       context: context,
-      builder: (context) => ContentDialog(
-        title: const Text('Import Data'),
-        content: const Text(
-          'Select a backup file to restore your screen time data. '
-          'This will merge with existing data.',
-        ),
-        actions: [
-          Button(
-            child: const Text('Cancel'),
-            onPressed: () => Navigator.pop(context),
-          ),
-          FilledButton(
-            child: const Text('Select File'),
-            onPressed: () async {
-              Navigator.pop(context);
-              final success = await DataSyncService().importData();
-              if (success && context.mounted) {
-                await displayInfoBar(
-                  context,
-                  builder: (context, close) => InfoBar(
-                    title: const Text('Import Complete'),
-                    content: const Text('Your usage logs have been restored to the timeline.'),
-                    severity: InfoBarSeverity.success,
-                    onClose: close,
-                  ),
-                );
-              }
-            },
-          ),
-        ],
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final hasFile = selectedFilePath?.isNotEmpty ?? false;
+          final contentWidth = (MediaQuery.sizeOf(context).width - 80)
+              .clamp(320.0, 560.0)
+              .toDouble();
+
+          return ContentDialog(
+            title: const Text('Import Data'),
+            content: SizedBox(
+              width: contentWidth,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Choose a backup file, preview what will change, then import in Merge or Replace mode.',
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      hasFile ? 'Selected file: $selectedFilePath' : 'No file selected',
+                      style: FluentTheme.of(context).typography.caption,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 12),
+                    InfoLabel(
+                      label: 'Import mode',
+                      child: ComboBox<ImportMode>(
+                        value: selectedMode,
+                        isExpanded: true,
+                        items: [
+                          ComboBoxItem(
+                            value: ImportMode.merge,
+                            child: Text(
+                              modeLabel(ImportMode.merge),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          ComboBoxItem(
+                            value: ImportMode.replace,
+                            child: Text(
+                              modeLabel(ImportMode.replace),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                        onChanged: isBusy
+                            ? null
+                            : (value) {
+                                if (value != null) {
+                                  setDialogState(() => selectedMode = value);
+                                }
+                              },
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      modeDescription(selectedMode),
+                      style: FluentTheme.of(context).typography.caption,
+                    ),
+                    if (preview != null) ...[
+                      const SizedBox(height: 16),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          color: FluentTheme.of(context).brightness == Brightness.light
+                              ? const Color(0xFFF5F5F5)
+                              : const Color(0xFF2D2D2D),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Preview', style: FluentTheme.of(context).typography.bodyStrong),
+                            const SizedBox(height: 8),
+                            Text('Rows in file: ${preview!.totalRows}'),
+                            Text('Valid rows: ${preview!.validRows}'),
+                            Text('Invalid rows skipped: ${preview!.invalidRows}'),
+                            Text('Consolidated records: ${preview!.consolidatedRecords}'),
+                            Text('New records: ${preview!.newRecords}'),
+                            Text('Duplicates skipped in merge: ${preview!.duplicateRecords}'),
+                            Text('Conflicts to resolve: ${preview!.conflictingRecords}'),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              Button(
+                child: const Text('Cancel'),
+                onPressed: isBusy ? null : () => Navigator.pop(dialogContext),
+              ),
+              Button(
+                child: const Text('Browse'),
+                onPressed: isBusy
+                    ? null
+                    : () async {
+                        final modeBeforePick = selectedMode;
+                        final previousFilePath = selectedFilePath;
+                        Navigator.pop(dialogContext);
+
+                        final filePath = await DataSyncService().pickImportFilePath();
+                        if (!mounted) {
+                          return;
+                        }
+
+                        _showImportDialog(
+                          parentContext,
+                          initialFilePath: filePath ?? previousFilePath,
+                          initialMode: modeBeforePick,
+                        );
+                      },
+              ),
+              Button(
+                child: isBusy
+                    ? const SizedBox(width: 16, height: 16, child: ProgressRing(strokeWidth: 2))
+                    : const Text('Preview'),
+                onPressed: (!hasFile || isBusy)
+                    ? null
+                    : () async {
+                        final activeFilePath = selectedFilePath;
+                        if (activeFilePath == null || activeFilePath.isEmpty) {
+                          return;
+                        }
+
+                        setDialogState(() => isBusy = true);
+                        final previewResult = await DataSyncService()
+                            .previewImportFile(activeFilePath);
+                        if (!parentContext.mounted) {
+                          return;
+                        }
+                        setDialogState(() {
+                          preview = previewResult;
+                          isBusy = false;
+                        });
+                      },
+              ),
+              FilledButton(
+                child: const Text('Import'),
+                onPressed: (!hasFile || isBusy)
+                    ? null
+                    : () async {
+                        final activeFilePath = selectedFilePath;
+                        if (activeFilePath == null || activeFilePath.isEmpty) {
+                          return;
+                        }
+
+                        if (selectedMode == ImportMode.replace) {
+                          final confirmed = await showDialog<bool>(
+                                context: dialogContext,
+                                builder: (context) => ContentDialog(
+                                  title: const Text('Confirm Replace Import'),
+                                  content: const Text(
+                                    'Replace mode will delete all current usage history before importing this file. Continue?',
+                                  ),
+                                  actions: [
+                                    Button(
+                                      child: const Text('Cancel'),
+                                      onPressed: () => Navigator.pop(context, false),
+                                    ),
+                                    FilledButton(
+                                      child: const Text('Replace Data'),
+                                      onPressed: () => Navigator.pop(context, true),
+                                    ),
+                                  ],
+                                ),
+                              ) ??
+                              false;
+                          if (!confirmed) {
+                            return;
+                          }
+                        }
+
+                        setDialogState(() => isBusy = true);
+                        final result = await DataSyncService().importData(
+                          activeFilePath,
+                          mode: selectedMode,
+                        );
+                        if (!parentContext.mounted) {
+                          return;
+                        }
+
+                        Navigator.pop(dialogContext);
+
+                        if (result.success) {
+                          await parentContext
+                              .read<ScreenTimeProvider>()
+                              .refreshData();
+                          if (!parentContext.mounted) {
+                            return;
+                          }
+                          await displayInfoBar(
+                            parentContext,
+                            builder: (context, close) => InfoBar(
+                              title: const Text('Import Complete'),
+                              content: Text(result.message),
+                              severity: InfoBarSeverity.success,
+                              onClose: close,
+                            ),
+                          );
+                        } else {
+                          await displayInfoBar(
+                            parentContext,
+                            builder: (context, close) => InfoBar(
+                              title: const Text('Import Failed'),
+                              content: Text(result.message),
+                              severity: InfoBarSeverity.error,
+                              onClose: close,
+                            ),
+                          );
+                        }
+                      },
+              ),
+            ],
+          );
+        },
       ),
     );
   }

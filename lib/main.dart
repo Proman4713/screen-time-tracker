@@ -73,23 +73,8 @@ class QuitIntent extends Intent {
   const QuitIntent();
 }
 
-// Keep a global reference so the lock file isn't released while the app runs
-RandomAccessFile? _lockFile;
-
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // Single-instance enforcement using a lock file
-  if (Platform.isWindows) {
-    try {
-      final lockPath = '${Platform.environment['LOCALAPPDATA']}\\ScreenTimeTracker.lock';
-      _lockFile = File(lockPath).openSync(mode: FileMode.write);
-      _lockFile!.lockSync(FileLock.exclusive);
-    } catch (e) {
-      // Lock failed — another instance is running
-      exit(0);
-    }
-  }
 
   // Initialize analytics
   await AnalyticsService().initialize();
@@ -156,13 +141,18 @@ class _ScreenTimeAppState extends State<ScreenTimeApp> {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider(
-          create: (_) => ScreenTimeProvider(
-            initialBlockRules: widget.settingsProvider.blockRules,
-          ),
-        ),
         ChangeNotifierProvider(create: (_) => ThemeProvider(widget.prefs)),
         ChangeNotifierProvider.value(value: widget.settingsProvider),
+        ChangeNotifierProxyProvider<SettingsProvider, ScreenTimeProvider>(
+          create: (_) =>
+              ScreenTimeProvider(initialSettings: widget.settingsProvider),
+          update: (_, settings, screenTimeProvider) {
+            final provider =
+                screenTimeProvider ?? ScreenTimeProvider(initialSettings: settings);
+            provider.applySettings(settings);
+            return provider;
+          },
+        ),
       ],
       child: Consumer<ThemeProvider>(
         builder: (context, themeProvider, child) {
@@ -227,7 +217,15 @@ class _MainWindowState extends State<MainWindow> with WindowListener {
   }
 
   Future<void> _initSystemTray() async {
-    String path = Platform.isWindows ? 'assets/Screen Time Logo.png' : 'AppIcon';
+    String path;
+    if (Platform.isWindows) {
+      final exeDirectory = File(Platform.resolvedExecutable).parent.path;
+      final bundledIconPath = '$exeDirectory\\data\\flutter_assets\\assets\\app_icon.ico';
+      final projectIconPath = '${Directory.current.path}\\assets\\app_icon.ico';
+      path = File(bundledIconPath).existsSync() ? bundledIconPath : projectIconPath;
+    } else {
+      path = 'AppIcon';
+    }
 
     try {
       // We first init the systray menu
