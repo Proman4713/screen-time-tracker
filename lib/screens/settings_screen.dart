@@ -303,7 +303,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         isLight: isLight,
                         child: ComboBox<int>(
                           value: settings.breakReminderInterval,
-                          items: [15, 30, 45, 60, 90, 120]
+                          items: [15, 20, 30, 45, 60, 90, 120]
                               .map(
                                 (mins) => ComboBoxItem(
                                   value: mins,
